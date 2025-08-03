@@ -2,7 +2,7 @@ use quick_xml::events::Event;
 use quick_xml::{Error, Reader};
 use regex::Regex;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, Read, Write};
 use zip::ZipArchive;
 
 #[derive(Debug)]
@@ -31,6 +31,180 @@ impl OdtParser {
         let sentences = self.split_into_sentences(&text);
 
         Ok(sentences)
+    }
+
+    pub fn interactive_mode(
+        &self,
+        sentences: Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if sentences.is_empty() {
+            println!("No sentences found in the document.");
+            return Ok(());
+        }
+
+        let mut current_index = 0;
+        let total_sentences = sentences.len();
+
+        self.clear_screen();
+        self.show_instructions();
+
+        loop {
+            self.display_sentence(
+                &sentences[current_index],
+                current_index + 1,
+                total_sentences,
+            );
+
+            let input = self.get_user_input()?;
+
+            match input.as_str() {
+                "n" | "next" | "" => {
+                    if current_index < total_sentences - 1 {
+                        current_index += 1;
+                        self.clear_screen();
+                    } else {
+                        println!("You've reached the end of the document");
+                        println!("Press 'p' to go back or 'q' to quit.");
+                    }
+                }
+                "p" | "prev" | "previous" => {
+                    if current_index > 0 {
+                        current_index -= 1;
+                        self.clear_screen();
+                    } else {
+                        println!("You're at the beginning of the document.");
+                        println!("Press 'n' or 'Enter' to proceed or 'q' to quit.");
+                    }
+                }
+                "f" | "first" => {
+                    current_index = 0;
+                    self.clear_screen();
+                }
+                "l" | "last" => {
+                    current_index = total_sentences - 1;
+                    self.clear_screen();
+                }
+                "h" | "help" => {
+                    self.clear_screen();
+                    self.show_instructions();
+                }
+                "q" | "quit" => {
+                    println!("Gooooodbye...");
+                    break;
+                }
+                num_str if num_str.chars().all(|c| c.is_ascii_digit()) => {
+                    if let Ok(sentence_num) = num_str.parse::<usize>() {
+                        if sentence_num > 0 && sentence_num <= total_sentences {
+                            current_index = sentence_num - 1;
+                            self.clear_screen();
+                        } else {
+                            println!(
+                                "Invalid sentence number. Must be between 1 and {}.",
+                                total_sentences
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    println!("Unknow command: {}. Type 'h' for help.", input);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn clear_screen(&self) {
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+    }
+
+    fn show_instructions(&self) {
+        println!("ODT Navigator");
+        println!("==========================");
+        println!();
+        println!("Commands:");
+        println!(" Enter/n/next -> Next sentence");
+        println!(" p/prev       -> Prev sentence");
+        println!(" f/first      -> Go to first sentence");
+        println!(" l/last       -> Go to last sentence");
+        println!(" [number]     -> Jump to sentence number");
+        println!(" h/help       -> Show this help...");
+        println!(" q/quit       -> Quit");
+        println!();
+        println!("Press Enter to start...");
+
+        self.get_user_input().ok();
+        self.clear_screen();
+    }
+
+    fn display_sentence(&self, sentence: &str, current: usize, total: usize) {
+        println!("ODT Navigator");
+        println!("==========================");
+        println!();
+        println!("Sentence {} of {}", current, total);
+        println!(
+            "Progress: [{}{}] {:.1}%",
+            "█".repeat(current * 30 / total),
+            "░".repeat(30 - (current * 30 / total)),
+            (current as f64 / total as f64) * 100.0
+        );
+        println!();
+        println!("┌─────────────────────────────────────────────────────────────┐");
+
+        let wrapped_lines = self.wrap_text(sentence, 59);
+        for line in wrapped_lines {
+            println!("| {:<59} |", line);
+        }
+
+        println!("└─────────────────────────────────────────────────────────────┘");
+        println!();
+        println!("Command (Enter=next, p=prev, h=help, q=quit)");
+        io::stdout().flush().unwrap();
+    }
+
+    fn wrap_text(&self, text: &str, width: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in text.split_whitespace() {
+            if current_line.len() + word.len() + 1 <= width {
+                if !current_line.is_empty() {
+                    current_line.push(' ');
+                }
+                current_line.push_str(word);
+            } else {
+                if !current_line.is_empty() {
+                    lines.push(current_line);
+                    current_line = String::new();
+                }
+                if word.len() <= width {
+                    current_line.push_str(word);
+                } else {
+                    //break long words
+                    lines.push(word[..width].to_string());
+                    if word.len() > width {
+                        current_line = word[width..].to_string();
+                    }
+                }
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+
+        lines
+    }
+
+    fn get_user_input(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        Ok(input.trim().to_lowercase())
     }
 
     fn extract_text_from_xml(
@@ -110,17 +284,36 @@ impl OdtParser {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() != 2 {
+        eprintln!("Usage: {} <odt_file>", args[0]);
+        eprintln!("Example: {} document.odt", args[0]);
+        std::process::exit(1);
+    }
+
+    let file_path = &args[1];
     let parser = OdtParser::new()?;
 
-    match parser.parse_file("ishmael.odt") {
+    println!("Parsing ODT file: {}", file_path);
+    println!("Please wait... \n");
+
+    match parser.parse_file(file_path) {
         Ok(sentences) => {
-            println!("Found {} sentences", sentences.len());
-            for (i, sentence) in sentences.iter().enumerate() {
-                println!("{}. {}", i + 1, sentence);
+            if sentences.is_empty() {
+                println!("No sentences found in the document.");
+                return Ok(());
             }
+
+            println!("Sucessfully parsed {} sentences!", sentences.len());
+            println!("Starting interactive mode... \n");
+
+            parser.interactive_mode(sentences)?;
         }
         Err(e) => {
-            eprintln!("Error parsing file: {}", e);
+            eprintln!("Error parsing file: '{}': {}", file_path, e);
+            eprintln!("Troubleshooting: File exist? Valid Format? Permissions? Corrupted File?");
+            std::process::exit(1);
         }
     }
 
