@@ -35,7 +35,7 @@ impl OdtParser {
 
     pub fn interactive_mode(
         &self,
-        sentences: Vec<String>,
+        mut sentences: Vec<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if sentences.is_empty() {
             println!("No sentences found in the document.");
@@ -44,6 +44,7 @@ impl OdtParser {
 
         let mut current_index = 0;
         let total_sentences = sentences.len();
+        let mut has_changes = false;
 
         self.clear_screen();
         self.show_instructions();
@@ -63,6 +64,7 @@ impl OdtParser {
                         current_index += 1;
                         self.clear_screen();
                     } else {
+                        self.clear_screen();
                         println!("You've reached the end of the document");
                         println!("Press 'p' to go back or 'q' to quit.");
                     }
@@ -72,9 +74,21 @@ impl OdtParser {
                         current_index -= 1;
                         self.clear_screen();
                     } else {
+                        self.clear_screen();
                         println!("You're at the beginning of the document.");
                         println!("Press 'n' or 'Enter' to proceed or 'q' to quit.");
                     }
+                }
+                "e" | "edit" => {
+                    let new_sentence = self.edit_sentence(&sentences[current_index])?;
+                    if new_sentence != sentences[current_index] {
+                        sentences[current_index] = new_sentence;
+                        has_changes = true;
+                        println!("Sentence updated!");
+                        println!("Press any key to continue...");
+                        self.get_user_input().ok();
+                    }
+                    self.clear_screen();
                 }
                 "f" | "first" => {
                     current_index = 0;
@@ -205,6 +219,39 @@ impl OdtParser {
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         Ok(input.trim().to_lowercase())
+    }
+
+    fn edit_sentence(&self, current_sentence: &str) -> Result<String, Box<dyn std::error::Error>> {
+        println!("Edit Mode:");
+        println!("====================");
+        println!();
+        println!("Current sentence:");
+        println!("┌─────────────────────────────────────────────────────────────┐");
+
+        let wrapped_lines = self.wrap_text(current_sentence, 59);
+        for line in wrapped_lines {
+            println!("| {:<59} |", line);
+        }
+
+        println!("└─────────────────────────────────────────────────────────────┘");
+        println!();
+        println!("Enter new text (or press Enter to keep unchanged): ");
+        println!("Note type 'cancel' to abort editing");
+        println!("> ");
+        io::stdout().flush().unwrap();
+
+        let mut new_text = String::new();
+        io::stdin().read_line(&mut new_text)?;
+        let new_text = new_text.trim();
+
+        if new_text.is_empty() {
+            Ok(current_sentence.to_string())
+        } else if new_text.to_lowercase() == "cancel" {
+            println!("Editing cancelled...");
+            Ok(current_sentence.to_string())
+        } else {
+            Ok(new_text.to_string())
+        }
     }
 
     fn extract_text_from_xml(
