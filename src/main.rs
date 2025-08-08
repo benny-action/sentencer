@@ -90,6 +90,14 @@ impl OdtParser {
                     }
                     self.clear_screen();
                 }
+                "s" | "save" => {
+                    self.save_sentences(&sentences)?;
+                    has_changes = false;
+                    println!("File saved successfully!");
+                    println!("Press any key to continue...");
+                    self.get_user_input().ok();
+                    self.clear_screen();
+                }
                 "f" | "first" => {
                     current_index = 0;
                     self.clear_screen();
@@ -143,6 +151,8 @@ impl OdtParser {
         println!(" f/first      -> Go to first sentence");
         println!(" l/last       -> Go to last sentence");
         println!(" [number]     -> Jump to sentence number");
+        println!(" e/edit       -> Edit sentence");
+        println!(" s/save       -> Save sentence");
         println!(" h/help       -> Show this help...");
         println!(" q/quit       -> Quit");
         println!();
@@ -252,6 +262,65 @@ impl OdtParser {
         } else {
             Ok(new_text.to_string())
         }
+    }
+
+    fn save_sentences(&self, sentences: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        let output_filename = format!("edited_document_{}.txt", timestamp);
+
+        println!("Saving to file...");
+        print!(
+            "Enter filename (or press Enter for '{}'): ",
+            output_filename
+        );
+        io::stdout().flush().unwrap();
+
+        let mut filename_input = String::new();
+        io::stdin().read_line(&mut filename_input)?;
+        let filename = filename_input.trim();
+
+        let final_filename = if filename.is_empty() {
+            output_filename
+        } else {
+            if filename.ends_with(".txt") {
+                filename.to_string()
+            } else {
+                format!("{}.txt", filename)
+            }
+        };
+
+        let mut file = File::create(&final_filename)?;
+        writeln!(file, "Edited Document")?;
+        writeln!(file, "===============")?;
+        writeln!(file, "Generated from ODT file")?;
+        writeln!(file, "Total sentences: {}", sentences.len())?;
+        writeln!(
+            file,
+            "Saved: {}",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        )?;
+        writeln!(file)?;
+
+        for (i, sentence) in sentences.iter().enumerate() {
+            writeln!(file, "{}. {}", i + 1, sentence)?;
+            writeln!(file)?;
+        }
+
+        let plain_filename = final_filename.replace(".txt", "_plain.txt");
+        let mut plain_file = File::create(&plain_filename)?;
+
+        for sentence in sentences {
+            writeln!(plain_file, "{}", sentence)?;
+        }
+
+        println!("Saved to:");
+        println!(" {} (numbered sentences)", final_filename);
+        println!(" {} (plain text)", plain_filename);
+
+        Ok(())
     }
 
     fn extract_text_from_xml(
